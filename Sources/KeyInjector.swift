@@ -45,23 +45,45 @@ final class KeyInjector {
     }
 
     /// 发一次按键（按下 + 抬起），带上当前的修饰键和 adding；“点一下”的修饰键用完即解除。
+    /// ignoreStickyShift：符号页的字符键自己决定要不要 ⇧（放在 adding 里），不理会“点一下”的 ⇧。
     /// 返回需要提示给用户的问题（没有权限、安全输入），没有问题返回 nil。
     @discardableResult
-    func tap(_ code: CGKeyCode, isLetter: Bool, adding: [Modifier] = []) -> String? {
+    func tap(_ code: CGKeyCode, isLetter: Bool, adding: [Modifier] = [], ignoreStickyShift: Bool = false) -> String? {
         if let problem = permissionProblem() { return problem }
-        let active = Modifier.allCases.filter { state(of: $0) != .off || adding.contains($0) }
+        let sticky = Modifier.allCases.filter { state(of: $0) != .off && !(ignoreStickyShift && $0 == .shift) }
+        var active = Modifier.allCases.filter { sticky.contains($0) || adding.contains($0) }
         var extra: CGEventFlags = []
-        if capsLock && isLetter { extra.insert(.maskShift) }
+        // 大写锁定和 ⇧ 同时开时，字母是小写，和实体键盘一致
+        if capsLock && isLetter {
+            if let i = active.firstIndex(of: .shift) { active.remove(at: i) } else { extra.insert(.maskShift) }
+        }
         if Self.arrowKeys.contains(code) { extra.formUnion([.maskNumericPad, .maskSecondaryFn]) }
         let warning = secureInputWarning()
         postChord(code, modifiers: active, extraFlags: extra)
 
         var changed = false
-        for m in active where state(of: m) == .once {
+        for m in sticky where state(of: m) == .once {
             modifiers[m] = .off
             changed = true
         }
         if changed { onStateChange?() }
+        return warning
+    }
+
+    /// 直接输入字符（长按备选里的 é、…、「 等 US 键位打不出的字符），不经过键码，不带修饰键。
+    @discardableResult
+    func type(_ text: String) -> String? {
+        if let problem = permissionProblem() { return problem }
+        let warning = secureInputWarning()
+        let units = Array(text.utf16)
+        for down in [true, false] {
+            guard let event = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: down) else { continue }
+            event.flags = []
+            units.withUnsafeBufferPointer {
+                event.keyboardSetUnicodeString(stringLength: units.count, unicodeString: $0.baseAddress)
+            }
+            event.post(tap: .cghidEventTap)
+        }
         return warning
     }
 

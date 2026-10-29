@@ -2,6 +2,7 @@
 // 编译：scripts/build-app.sh
 import AppKit
 import ApplicationServices
+import ServiceManagement
 
 @main
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
@@ -40,6 +41,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         addItem(to: menu, panel.isVisible ? "隐藏键盘" : "显示键盘", #selector(toggleKeyboard))
         menu.addItem(.separator())
 
+        switch SMAppService.mainApp.status {
+        case .enabled:
+            addItem(to: menu, "登录时启动", #selector(toggleLaunchAtLogin)).state = .on
+        case .requiresApproval:
+            addItem(to: menu, "登录时启动：需在“登录项”里允许（点此打开）", #selector(openLoginItemsSettings))
+        default:
+            addItem(to: menu, "登录时启动", #selector(toggleLaunchAtLogin)).state = .off
+        }
+
         if AXIsProcessTrusted() {
             addItem(to: menu, "辅助功能权限：已授权", nil)
         } else {
@@ -57,14 +67,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         addItem(to: menu, "退出", #selector(quit))
     }
 
-    private func addItem(to menu: NSMenu, _ title: String, _ action: Selector?) {
+    @discardableResult
+    private func addItem(to menu: NSMenu, _ title: String, _ action: Selector?) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
         item.target = self
         menu.addItem(item)
+        return item
     }
 
     @objc private func toggleKeyboard() {
         panel.toggle()
+    }
+
+    // 用 SMAppService 注册为登录项，在“系统设置 → 通用 → 登录项”里可见、可关
+    @objc private func toggleLaunchAtLogin() {
+        let service = SMAppService.mainApp
+        do {
+            if service.status == .enabled {
+                try service.unregister()
+            } else {
+                try service.register()
+            }
+            Diagnostics.shared.log("登录时启动：\(service.status == .enabled ? "开" : "关")（status=\(service.status.rawValue)）")
+        } catch {
+            Diagnostics.shared.log("登录时启动设置失败：\(error.localizedDescription)")
+            let alert = NSAlert()
+            alert.messageText = "设置登录时启动失败"
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
+        }
+    }
+
+    @objc private func openLoginItemsSettings() {
+        SMAppService.openSystemSettingsLoginItems()
     }
 
     @objc private func openAccessibilitySettings() {

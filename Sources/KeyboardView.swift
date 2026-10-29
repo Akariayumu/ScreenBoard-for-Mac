@@ -1,11 +1,19 @@
 // 键盘本体：自绘按键，处理点按。顶部一条是拖动条（中间拖动移动、右端拖动改大小）。
 // 普通键在按下时就发出，保证跟手；⌫ 和方向键按住并滑动时连发，长按（右键）按词删除/移动。
+// 有备选字符的键长按弹出备选面板，再点一下选择。
 import AppKit
 
 private struct PlacedKey {
     let def: KeyDef
     /// 整格，用于点按判定（键之间的缝也算在内，避免点空）
     let cell: NSRect
+}
+
+/// 长按弹出的备选字符：第一个是本键字符（走键码），其余直接输入
+private struct AlternatesPopup {
+    let def: KeyDef
+    let options: [String]
+    let cells: [NSRect]
 }
 
 private enum DragMode {
@@ -38,6 +46,8 @@ final class KeyboardView: NSView {
     private var notice: String?
     private var noticeGeneration = 0
     private var inputIsIME = InputSource.isIME
+    private var page: KeyPage = .letters
+    private var popup: AlternatesPopup?
 
     private let padding: CGFloat = 8
     private let handleHeight: CGFloat = 24
@@ -87,9 +97,11 @@ final class KeyboardView: NSView {
 
     private func layoutKeys() {
         keys.removeAll()
+        popup = nil
+        let rows = KeyLayout.rows(for: page)
         let unit = (bounds.width - padding * 2) / KeyLayout.rowUnits
-        let rowHeight = (bounds.height - handleHeight - padding) / CGFloat(KeyLayout.rows.count)
-        for (r, row) in KeyLayout.rows.enumerated() {
+        let rowHeight = (bounds.height - handleHeight - padding) / CGFloat(rows.count)
+        for (r, row) in rows.enumerated() {
             var x = padding
             let y = handleHeight + CGFloat(r) * rowHeight
             for def in row {
@@ -116,6 +128,31 @@ final class KeyboardView: NSView {
 
         for (i, key) in keys.enumerated() {
             drawKey(key, pressed: i == pressedIndex)
+        }
+        if let popup { drawPopup(popup) }
+    }
+
+    private func drawPopup(_ popup: AlternatesPopup) {
+        guard let first = popup.cells.first, let last = popup.cells.last else { return }
+        let frame = first.union(last).insetBy(dx: -4, dy: -4)
+        let background = NSBezierPath(roundedRect: frame, xRadius: 10, yRadius: 10)
+        NSGraphicsContext.saveGraphicsState()
+        let shadow = NSShadow()
+        shadow.shadowBlurRadius = 8
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.35)
+        shadow.set()
+        Palette.functionKey.setFill()
+        background.fill()
+        NSGraphicsContext.restoreGraphicsState()
+        NSColor.controlAccentColor.setStroke()
+        background.lineWidth = 1.5
+        background.stroke()
+
+        for (option, cell) in zip(popup.options, popup.cells) {
+            let rect = cell.insetBy(dx: gap / 2, dy: gap / 2)
+            Palette.key.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6).fill()
+            drawText(option, centeredIn: rect, size: min(rect.height * 0.42, 24), color: .labelColor)
         }
     }
 
@@ -166,7 +203,7 @@ final class KeyboardView: NSView {
         }
 
         let textColor: NSColor = highlighted ? .white : .labelColor
-        let shifted = def.isLetter ? (injector.shiftActive != injector.capsLock) : injector.shiftActive
+        let shifted = isShifted(def)
         let size = def.isCharacter ? min(rect.height * 0.42, 24) : min(rect.height * 0.30, 16)
         drawText(def.label(shifted: shifted), centeredIn: rect, size: size, color: textColor)
 
@@ -178,6 +215,12 @@ final class KeyboardView: NSView {
             drawText(hint, at: NSPoint(x: rect.minX + 5, y: rect.minY + 3), size: size * 0.55,
                      color: highlighted ? .white : .secondaryLabelColor)
         }
+    }
+
+    /// 字母看 ⇧ 和大写锁定；字母页的符号键只看 ⇧；符号页的字符键固定显示本字符
+    private func isShifted(_ def: KeyDef) -> Bool {
+        if def.isLetter { return injector.shiftActive != injector.capsLock }
+        return def.ignoresStickyShift ? false : injector.shiftActive
     }
 
     private func isSpace(_ def: KeyDef) -> Bool {
@@ -204,6 +247,19 @@ final class KeyboardView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         guard let window else { return }
 
+        // 备选面板开着时：点到备选就输入，点别处只收起面板（和 Win11 一样）
+        if let popup {
+            self.popup = nil
+            needsDisplay = true
+            if let i = popup.cells.firstIndex(where: { $0.contains(point) }) {
+                Diagnostics.shared.mouseDown(event, key: "备选 \(popup.options[i])")
+                choose(i, in: popup)
+            } else {
+                Diagnostics.shared.mouseDown(event, key: "收起备选")
+            }
+            return
+        }
+
         if point.y < handleHeight {
             Diagnostics.shared.mouseDown(event, key: "拖动条")
             if gripRect.contains(point) {
@@ -228,6 +284,10 @@ final class KeyboardView: NSView {
     private func press(_ index: Int, event: NSEvent, longPress: Bool) {
         let def = keys[index].def
         Diagnostics.shared.mouseDown(event, key: def.label.isEmpty ? "空格" : def.label, button: longPress ? "右" : "左")
+        if longPress && !def.alternates.isEmpty {
+            showAlternates(for: keys[index])
+            return
+        }
         pressedIndex = index
         dragMode = .key
         needsDisplay = true
@@ -270,6 +330,11 @@ final class KeyboardView: NSView {
     // VoodooI2C 触摸屏（实测）：点按在手指抬起时一次性发左键按下+抬起；手指不动按住，到时间就在按住期间
     // 一次性发右键按下+抬起；按住后滑动则实时发左键按下/拖动/抬起。所以右键就是“长按”。
     override func rightMouseDown(with event: NSEvent) {
+        if popup != nil {
+            popup = nil
+            needsDisplay = true
+            return
+        }
         guard let index = keyIndex(at: convert(event.locationInWindow, from: nil)) else {
             Diagnostics.shared.unexpected(event, "右键按下（不在键上）")
             return
@@ -298,18 +363,50 @@ final class KeyboardView: NSView {
         var problem: String?
         switch def.action {
         case .key(let code):
-            let adding: [Modifier] = longPress && def.optionOnLongPress ? [.option] : []
-            problem = injector.tap(code, isLetter: def.isLetter, adding: adding)
+            let adding = def.fixedModifiers + (longPress && def.optionOnLongPress ? [.option] : [])
+            problem = injector.tap(code, isLetter: def.isLetter, adding: adding,
+                                   ignoreStickyShift: def.ignoresStickyShift)
         case .modifier(let m):
             injector.toggleModifier(m)
         case .capsLock:
             injector.toggleCaps()
         case .inputSwitch:
             problem = injector.switchInputSource()
+        case .page(let target):
+            page = target
+            layoutKeys()
         case .hide:
             window?.orderOut(nil)
         }
         if let problem { showNotice(problem) }
+    }
+
+    /// 备选面板盖在键的上一行（第一行的键往下一行盖），每格和键一样高，第一格对准本键
+    private func showAlternates(for key: PlacedKey) {
+        let def = key.def
+        let shifted = isShifted(def)
+        let alternates = def.alternates.map { a -> String in
+            guard def.isLetter && shifted else { return a }
+            let upper = a.uppercased()
+            return upper.count == 1 ? upper : a  // ß 的大写是 SS，保留原样
+        }
+        let options = [def.label(shifted: shifted)] + alternates
+        let height = key.cell.height
+        let width = max(key.cell.width, height * 0.9)
+        let total = width * CGFloat(options.count)
+        let x = min(max(key.cell.minX, padding), bounds.width - padding - total)
+        let y = key.cell.minY - height < handleHeight ? key.cell.maxY : key.cell.minY - height
+        let cells = options.indices.map { NSRect(x: x + CGFloat($0) * width, y: y, width: width, height: height) }
+        popup = AlternatesPopup(def: def, options: options, cells: cells)
+        needsDisplay = true
+    }
+
+    private func choose(_ index: Int, in popup: AlternatesPopup) {
+        if index == 0 {
+            trigger(popup.def)
+        } else if let problem = injector.type(popup.options[index]) {
+            showNotice(problem)
+        }
     }
 
     private func startRepeat(_ def: KeyDef) {
