@@ -40,6 +40,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.removeAllItems()
         addItem(to: menu, panel.isVisible ? "隐藏键盘" : "显示键盘", #selector(toggleKeyboard))
         menu.addItem(.separator())
+        Settings.shared.addItems(to: menu)
+        menu.addItem(.separator())
 
         switch SMAppService.mainApp.status {
         case .enabled:

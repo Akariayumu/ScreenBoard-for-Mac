@@ -1,6 +1,7 @@
-// 键盘本体：自绘按键，处理点按。顶部一条是拖动条（中间拖动移动、右端拖动改大小）。
+// 键盘本体：自绘按键，处理点按。顶部一条是拖动条：左端齿轮弹出设置菜单，中间拖动移动，右端拖动改大小（停靠时不能拖）。
 // 普通键在按下时就发出，保证跟手；⌫ 和方向键按住并滑动时连发，长按（右键）按词删除/移动。
 // 有备选字符的键长按弹出备选面板，再点一下选择。
+// 分体布局时左右两半贴两边，中间不画背景，透明处的点按穿透到下面的窗口。
 import AppKit
 
 private struct PlacedKey {
@@ -23,23 +24,49 @@ private enum DragMode {
     case resize(startFrame: NSRect, startMouse: NSPoint)
 }
 
+// 接近 Win11 触摸键盘的配色：字符键最亮，功能键稍暗，按下时变色而不是用强调色
 private enum Palette {
-    static let background = dynamic(light: 0.84, dark: 0.13)
-    static let key = dynamic(light: 0.99, dark: 0.28)
-    static let functionKey = dynamic(light: 0.92, dark: 0.20)
-    static let handle = dynamic(light: 0.55, dark: 0.50)
+    static let background = dynamic(light: 0.93, dark: 0.125)
+    static let key = dynamic(light: 1.0, dark: 0.235)
+    static let functionKey = dynamic(light: 0.875, dark: 0.18)
+    static let pressed = dynamic(light: 0.78, dark: 0.33)
+    static let handle = dynamic(light: 0.62, dark: 0.48)
+    static let keyShadow = NSColor(name: nil) { appearance in
+        NSColor.black.withAlphaComponent(isDark(appearance) ? 0.35 : 0.12)
+    }
+
+    static func isDark(_ appearance: NSAppearance) -> Bool {
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+    }
 
     static func dynamic(light: CGFloat, dark: CGFloat) -> NSColor {
         NSColor(name: nil) { appearance in
-            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            return NSColor(white: isDark ? dark : light, alpha: 1)
+            NSColor(white: isDark(appearance) ? dark : light, alpha: 1)
         }
     }
 }
 
 final class KeyboardView: NSView {
+    static let handleHeight: CGFloat = 26
+    static let padding: CGFloat = 8
+    private static let gap: CGFloat = 5
+    private static let gripWidth: CGFloat = 44
+    private static let gearWidth: CGFloat = 40
+    private static let minSplitGap: CGFloat = 40
+
+    static func preferredHeight(rowHeight: CGFloat) -> CGFloat {
+        handleHeight + rowHeight * 5 + padding
+    }
+
+    /// 标准布局的浮动宽度：键宽约为行高的 1.05 倍
+    static func standardWidth(rowHeight: CGFloat) -> CGFloat {
+        (rowHeight * 1.05 * KeyLayout.rowUnits + padding * 2).rounded()
+    }
+
     private let injector: KeyInjector
     private var keys: [PlacedKey] = []
+    /// 画背景的区域：标准布局一块，分体布局左右两块
+    private var panes: [NSRect] = []
     private var pressedIndex: Int?
     private var dragMode: DragMode = .none
     private var repeatTimer: Timer?
@@ -48,11 +75,6 @@ final class KeyboardView: NSView {
     private var inputIsIME = InputSource.isIME
     private var page: KeyPage = .letters
     private var popup: AlternatesPopup?
-
-    private let padding: CGFloat = 8
-    private let handleHeight: CGFloat = 24
-    private let gap: CGFloat = 5
-    private let gripWidth: CGFloat = 44
 
     init(injector: KeyInjector) {
         self.injector = injector
@@ -85,51 +107,172 @@ final class KeyboardView: NSView {
         needsDisplay = true
     }
 
+    /// 布局、停靠等设置变了（窗口大小可能没变），重新排键
+    func settingsChanged() {
+        layoutKeys()
+    }
+
     @objc private func inputSourceChanged() {
         inputIsIME = InputSource.isIME
         Diagnostics.shared.log("输入源切换为 \(InputSource.currentID())")
         needsDisplay = true
     }
 
-    private var gripRect: NSRect {
-        NSRect(x: bounds.maxX - gripWidth, y: 0, width: gripWidth, height: handleHeight)
+    private var gearRect: NSRect {
+        NSRect(x: panes.first?.minX ?? 0, y: 0, width: Self.gearWidth, height: Self.handleHeight)
     }
+
+    private var gripRect: NSRect {
+        NSRect(x: (panes.last ?? bounds).maxX - Self.gripWidth, y: 0, width: Self.gripWidth, height: Self.handleHeight)
+    }
+
+    // MARK: 布局
 
     private func layoutKeys() {
         keys.removeAll()
         popup = nil
-        let rows = KeyLayout.rows(for: page)
-        let unit = (bounds.width - padding * 2) / KeyLayout.rowUnits
-        let rowHeight = (bounds.height - handleHeight - padding) / CGFloat(rows.count)
-        for (r, row) in rows.enumerated() {
-            var x = padding
-            let y = handleHeight + CGFloat(r) * rowHeight
-            for def in row {
-                let width = def.width * unit
-                keys.append(PlacedKey(def: def, cell: NSRect(x: x, y: y, width: width, height: rowHeight)))
-                x += width
+        pressedIndex = nil
+        let padding = Self.padding
+        let rowHeight = (bounds.height - Self.handleHeight - padding) / CGFloat(KeyLayout.rows(for: page).count)
+
+        if Settings.shared.split {
+            // 键接近方形，两半贴两边，剩下的都是中间的空隙；窗口太窄时缩小键
+            let half = KeyLayout.splitHalfUnits
+            let unit = max(1, min(rowHeight * 1.1, (bounds.width - padding * 4 - Self.minSplitGap) / (half * 2)))
+            let paneWidth = half * unit + padding * 2
+            panes = [
+                NSRect(x: 0, y: 0, width: paneWidth, height: bounds.height),
+                NSRect(x: bounds.maxX - paneWidth, y: 0, width: paneWidth, height: bounds.height),
+            ]
+            for (r, row) in KeyLayout.splitRows(for: page).enumerated() {
+                let y = Self.handleHeight + CGFloat(r) * rowHeight
+                place(row.left, fromX: padding, y: y, unit: unit, height: rowHeight)
+                let rightWidth = row.right.reduce(0) { $0 + $1.width } * unit
+                place(row.right, fromX: bounds.maxX - padding - rightWidth, y: y, unit: unit, height: rowHeight)
+            }
+        } else {
+            panes = [bounds]
+            let unit = (bounds.width - padding * 2) / KeyLayout.rowUnits
+            for (r, row) in KeyLayout.rows(for: page).enumerated() {
+                place(row, fromX: padding, y: Self.handleHeight + CGFloat(r) * rowHeight, unit: unit, height: rowHeight)
             }
         }
         needsDisplay = true
+        // 窗口阴影按透明区域算，分体时要等重画后更新
+        DispatchQueue.main.async { [weak self] in self?.window?.invalidateShadow() }
+    }
+
+    private func place(_ row: [KeyDef], fromX startX: CGFloat, y: CGFloat, unit: CGFloat, height: CGFloat) {
+        var x = startX
+        for def in row {
+            let width = def.width * unit
+            keys.append(PlacedKey(def: def, cell: NSRect(x: x, y: y, width: width, height: height)))
+            x += width
+        }
     }
 
     // MARK: 绘制
 
     override func draw(_ dirtyRect: NSRect) {
-        Palette.background.setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: 12, yRadius: 12).fill()
-
-        Palette.handle.setFill()
-        NSBezierPath(roundedRect: NSRect(x: bounds.midX - 32, y: 9, width: 64, height: 5), xRadius: 2.5, yRadius: 2.5).fill()
-        drawGrip()
+        let docked = Settings.shared.docked
+        for pane in panes {
+            Palette.background.setFill()
+            NSBezierPath(roundedRect: pane, xRadius: 10, yRadius: 10).fill()
+            if !docked {
+                Palette.handle.setFill()
+                NSBezierPath(roundedRect: NSRect(x: pane.midX - 24, y: 10, width: 48, height: 4), xRadius: 2, yRadius: 2).fill()
+            }
+        }
+        drawSymbol("gearshape", in: gearRect, size: 13, color: .secondaryLabelColor)
+        if !docked { drawGrip() }
         if let notice {
-            drawText(notice, at: NSPoint(x: padding + 4, y: 4), size: 11, color: .systemOrange)
+            drawText(notice, at: NSPoint(x: gearRect.maxX, y: 5), size: 11, color: .systemOrange)
         }
 
         for (i, key) in keys.enumerated() {
             drawKey(key, pressed: i == pressedIndex)
         }
         if let popup { drawPopup(popup) }
+    }
+
+    private func drawGrip() {
+        let path = NSBezierPath()
+        let right = gripRect.maxX - 12
+        for offset: CGFloat in [0, 5, 10] {
+            path.move(to: NSPoint(x: right - 10 + offset, y: 7))
+            path.line(to: NSPoint(x: right, y: 17 - offset))
+        }
+        path.lineWidth = 1.5
+        path.lineCapStyle = .round
+        Palette.handle.setStroke()
+        path.stroke()
+    }
+
+    private func drawKey(_ key: PlacedKey, pressed: Bool) {
+        let def = key.def
+        let rect = key.cell.insetBy(dx: Self.gap / 2, dy: Self.gap / 2)
+        let path = NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5)
+        // 底边一道细阴影，接近 Win11 键帽
+        Palette.keyShadow.setFill()
+        NSBezierPath(roundedRect: rect.offsetBy(dx: 0, dy: 1), xRadius: 5, yRadius: 5).fill()
+        (def.isCharacter || isSpace(def) ? Palette.key : Palette.functionKey).setFill()
+        path.fill()
+
+        var highlighted = false
+        if pressed {
+            Palette.pressed.setFill()
+            path.fill()
+        } else {
+            switch def.action {
+            case .modifier(let m) where injector.state(of: m) != .off:
+                NSColor.controlAccentColor.setFill()
+                path.fill()
+                highlighted = true
+                if injector.state(of: m) == .locked {
+                    NSColor.white.setFill()
+                    NSBezierPath(roundedRect: NSRect(x: rect.midX - 10, y: rect.maxY - 7, width: 20, height: 3),
+                                 xRadius: 1.5, yRadius: 1.5).fill()
+                }
+            case .capsLock where injector.capsLock:
+                NSColor.controlAccentColor.setFill()
+                path.fill()
+                highlighted = true
+            default:
+                break
+            }
+        }
+
+        let textColor: NSColor = highlighted ? .white : .labelColor
+        let shifted = isShifted(def)
+        let iconDrawn = symbolName(for: def).map {
+            drawSymbol($0, in: rect, size: min(rect.height * 0.32, 18), color: textColor)
+        } ?? false
+        if !iconDrawn {
+            let size = def.isCharacter ? min(rect.height * 0.42, 24) : min(rect.height * 0.30, 16)
+            drawText(label(for: def, shifted: shifted), centeredIn: rect, size: size, color: textColor)
+        }
+
+        // 角标：字母页的符号键在未按 ⇧ 时提示上档字符
+        if !def.isLetter && !shifted, let shiftLabel = def.shiftLabel {
+            drawText(shiftLabel, at: NSPoint(x: rect.minX + 5, y: rect.minY + 3),
+                     size: min(rect.height * 0.42, 24) * 0.55, color: .secondaryLabelColor)
+        }
+    }
+
+    private func symbolName(for def: KeyDef) -> String? {
+        switch def.action {
+        case .modifier(.shift):
+            return injector.state(of: .shift) == .off ? "shift" : "shift.fill"
+        case .capsLock:
+            return injector.capsLock ? "capslock.fill" : "capslock"
+        default:
+            return def.symbol
+        }
+    }
+
+    private func label(for def: KeyDef, shifted: Bool) -> String {
+        if case .inputSwitch = def.action { return inputIsIME ? "中" : "英" }
+        return def.label(shifted: shifted)
     }
 
     private func drawPopup(_ popup: AlternatesPopup) {
@@ -149,71 +292,10 @@ final class KeyboardView: NSView {
         background.stroke()
 
         for (option, cell) in zip(popup.options, popup.cells) {
-            let rect = cell.insetBy(dx: gap / 2, dy: gap / 2)
+            let rect = cell.insetBy(dx: Self.gap / 2, dy: Self.gap / 2)
             Palette.key.setFill()
-            NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6).fill()
+            NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5).fill()
             drawText(option, centeredIn: rect, size: min(rect.height * 0.42, 24), color: .labelColor)
-        }
-    }
-
-    private func drawGrip() {
-        let path = NSBezierPath()
-        let right = bounds.maxX - 12
-        for offset: CGFloat in [0, 5, 10] {
-            path.move(to: NSPoint(x: right - 10 + offset, y: 6))
-            path.line(to: NSPoint(x: right, y: 16 - offset))
-        }
-        path.lineWidth = 1.5
-        path.lineCapStyle = .round
-        Palette.handle.setStroke()
-        path.stroke()
-    }
-
-    private func drawKey(_ key: PlacedKey, pressed: Bool) {
-        let def = key.def
-        let rect = key.cell.insetBy(dx: gap / 2, dy: gap / 2)
-        let path = NSBezierPath(roundedRect: rect, xRadius: 6, yRadius: 6)
-        (def.isCharacter || isSpace(def) ? Palette.key : Palette.functionKey).setFill()
-        path.fill()
-
-        var highlighted = false
-        if pressed {
-            NSColor.controlAccentColor.setFill()
-            path.fill()
-            highlighted = true
-        } else {
-            switch def.action {
-            case .modifier(let m) where injector.state(of: m) == .locked:
-                NSColor.controlAccentColor.setFill()
-                path.fill()
-                highlighted = true
-                NSColor.white.setFill()
-                NSBezierPath(roundedRect: NSRect(x: rect.midX - 10, y: rect.maxY - 7, width: 20, height: 3),
-                             xRadius: 1.5, yRadius: 1.5).fill()
-            case .modifier(let m) where injector.state(of: m) == .once:
-                NSColor.controlAccentColor.withAlphaComponent(0.45).setFill()
-                path.fill()
-            case .capsLock where injector.capsLock:
-                NSColor.controlAccentColor.setFill()
-                path.fill()
-                highlighted = true
-            default:
-                break
-            }
-        }
-
-        let textColor: NSColor = highlighted ? .white : .labelColor
-        let shifted = isShifted(def)
-        let size = def.isCharacter ? min(rect.height * 0.42, 24) : min(rect.height * 0.30, 16)
-        drawText(def.label(shifted: shifted), centeredIn: rect, size: size, color: textColor)
-
-        // 角标：符号键在未按 Shift 时提示上档字符；中/英键提示当前输入源
-        var hint: String?
-        if !def.isLetter && !shifted, let shiftLabel = def.shiftLabel { hint = shiftLabel }
-        if case .inputSwitch = def.action { hint = inputIsIME ? "拼" : "A" }
-        if let hint {
-            drawText(hint, at: NSPoint(x: rect.minX + 5, y: rect.minY + 3), size: size * 0.55,
-                     color: highlighted ? .white : .secondaryLabelColor)
         }
     }
 
@@ -225,6 +307,18 @@ final class KeyboardView: NSView {
 
     private func isSpace(_ def: KeyDef) -> Bool {
         def.label.isEmpty
+    }
+
+    @discardableResult
+    private func drawSymbol(_ name: String, in rect: NSRect, size: CGFloat, color: NSColor) -> Bool {
+        let config = NSImage.SymbolConfiguration(pointSize: size, weight: .regular)
+            .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
+        guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(config) else { return false }
+        let s = image.size
+        image.draw(in: NSRect(x: rect.midX - s.width / 2, y: rect.midY - s.height / 2, width: s.width, height: s.height),
+                   from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        return true
     }
 
     private func drawText(_ text: String, centeredIn rect: NSRect, size: CGFloat, color: NSColor) {
@@ -260,7 +354,13 @@ final class KeyboardView: NSView {
             return
         }
 
-        if point.y < handleHeight {
+        if point.y < Self.handleHeight {
+            if gearRect.contains(point) {
+                Diagnostics.shared.mouseDown(event, key: "设置")
+                showSettingsMenu()
+                return
+            }
+            guard !Settings.shared.docked, panes.contains(where: { $0.contains(point) }) else { return }
             Diagnostics.shared.mouseDown(event, key: "拖动条")
             if gripRect.contains(point) {
                 dragMode = .resize(startFrame: window.frame, startMouse: NSEvent.mouseLocation)
@@ -278,7 +378,7 @@ final class KeyboardView: NSView {
     }
 
     private func keyIndex(at point: NSPoint) -> Int? {
-        point.y < handleHeight ? nil : keys.firstIndex(where: { $0.cell.contains(point) })
+        point.y < Self.handleHeight ? nil : keys.firstIndex(where: { $0.cell.contains(point) })
     }
 
     private func press(_ index: Int, event: NSEvent, longPress: Bool) {
@@ -359,6 +459,20 @@ final class KeyboardView: NSView {
         Diagnostics.shared.count("压力事件")
     }
 
+    private func showSettingsMenu() {
+        let menu = NSMenu()
+        Settings.shared.addItems(to: menu)
+        menu.addItem(.separator())
+        let hide = NSMenuItem(title: "收起键盘", action: #selector(hideKeyboard), keyEquivalent: "")
+        hide.target = self
+        menu.addItem(hide)
+        menu.popUp(positioning: nil, at: NSPoint(x: gearRect.minX + 6, y: gearRect.maxY), in: self)
+    }
+
+    @objc private func hideKeyboard() {
+        window?.orderOut(nil)
+    }
+
     private func trigger(_ def: KeyDef, longPress: Bool = false) {
         var problem: String?
         switch def.action {
@@ -394,8 +508,8 @@ final class KeyboardView: NSView {
         let height = key.cell.height
         let width = max(key.cell.width, height * 0.9)
         let total = width * CGFloat(options.count)
-        let x = min(max(key.cell.minX, padding), bounds.width - padding - total)
-        let y = key.cell.minY - height < handleHeight ? key.cell.maxY : key.cell.minY - height
+        let x = min(max(key.cell.minX, Self.padding), bounds.width - Self.padding - total)
+        let y = key.cell.minY - height < Self.handleHeight ? key.cell.maxY : key.cell.minY - height
         let cells = options.indices.map { NSRect(x: x + CGFloat($0) * width, y: y, width: width, height: height) }
         popup = AlternatesPopup(def: def, options: options, cells: cells)
         needsDisplay = true

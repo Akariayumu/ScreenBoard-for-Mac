@@ -1,6 +1,6 @@
 # ScreenBoard
 
-仿 Win11 触摸键盘的 macOS 屏幕键盘。当前做完 P0 原型和 P1 的一部分（符号页、长按备选、登录时启动），预研究见 `docs/onscreen-keyboard-research-20261029.md`。
+仿 Win11 触摸键盘的 macOS 屏幕键盘。P0 原型和 P1 已完成（按键音没做），预研究见 `docs/onscreen-keyboard-research-20261029.md`。
 
 ## 功能
 
@@ -10,6 +10,9 @@
 - 长按备选字符：长按 e、a、o、u、n、c、`.`、`'`、`-`、`[` 等键，键上方弹出备选，再点一下输入；点别处收起。备选字符用 Unicode 直接输入，ABC 和拼音下都能用。
 - 按键用虚拟键码注入，系统拼音照常工作。`中/英` 键发送 ⌃空格（系统默认的“选择上一个输入法”），角标显示当前是拼音还是 ABC。
 - 修饰键（⇧ ⌃ ⌥ ⌘）：点一下只作用于下一个键（半高亮），双击常锁（全高亮带横条），再点一下解除。`⇪` 只影响字母大小写。
+- 外观接近 Win11：圆角键帽、图标、按下变色；可选跟随系统、浅色、深色。尺寸分小、中、大三档。
+- 停靠在屏幕底部（铺满宽度）或浮动；分体布局：左右两半贴屏幕两边，各有一个空格，中间透明，点按穿透到下面的窗口。
+- 键盘左上角齿轮和菜单栏图标里都能改布局、停靠、尺寸、外观。
 - 菜单栏图标：显示/隐藏键盘、登录时启动、辅助功能权限状态、诊断摘要。
 
 ## 编译和安装（在 Mac 上）
@@ -75,8 +78,9 @@ tccutil reset Accessibility com.xstation.screenboard   # 清掉旧授权，再�
 | 文件 | 内容 |
 |---|---|
 | `Sources/App.swift` | 入口、菜单栏、权限 |
-| `Sources/KeyboardPanel.swift` | 不抢焦点的浮动窗口 |
-| `Sources/KeyboardView.swift` | 按键绘制、点按、长按（右键）、拖动/改大小、连发 |
+| `Sources/KeyboardPanel.swift` | 不抢焦点的浮动窗口，按设置停靠/浮动、算大小 |
+| `Sources/Settings.swift` | 布局、停靠、尺寸、外观设置和菜单 |
+| `Sources/KeyboardView.swift` | 按键绘制、标准/分体布局、点按、长按备选、齿轮菜单、拖动/改大小、连发 |
 | `Sources/KeyLayout.swift` | 键位表 |
 | `Sources/KeyInjector.swift` | CGEvent 注入、修饰键锁定、输入源查询 |
 | `Sources/Diagnostics.swift` | P0 诊断日志和统计 |
