@@ -56,7 +56,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
 EOF
 
 codesign --force --sign "$SIGN_IDENTITY" "$APP"
-echo "==> $APP（签名：$SIGN_IDENTITY）"
+echo "==> ${APP}（签名：${SIGN_IDENTITY}）"
 
 if [[ "${1:-}" == "--install" ]]; then
     pkill -x ScreenBoard 2>/dev/null || true

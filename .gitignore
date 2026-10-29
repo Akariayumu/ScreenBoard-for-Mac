@@ -1,2 +1,4 @@
 build/
 .DS_Store
+# 测试机登录信息，只放本地
+.testmac.env
