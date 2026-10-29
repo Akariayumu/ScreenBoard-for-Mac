@@ -22,4 +22,6 @@ rsync -az --delete -e "sshpass -e ssh ${SSH_OPTS[*]}" \
     ./ "$MAC_HOST:$REMOTE_DIR/"
 
 echo "==> 在测试机上编译"
-sshpass -e ssh "${SSH_OPTS[@]}" "$MAC_HOST" "cd $REMOTE_DIR && scripts/build-app.sh $*"
+# ssh 会话里登录钥匙串是锁着的，先解锁，codesign 才能用 "ScreenBoard Dev" 证书。密码走标准输入，不写进 ssh 命令
+printf '%s\n' "$MAC_PASSWORD" | sshpass -e ssh "${SSH_OPTS[@]}" "$MAC_HOST" \
+    "read -r PW; security unlock-keychain -p \"\$PW\" login.keychain-db; cd $REMOTE_DIR && scripts/build-app.sh $*"

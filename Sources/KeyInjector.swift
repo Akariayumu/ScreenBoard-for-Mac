@@ -44,12 +44,12 @@ final class KeyInjector {
         onStateChange?()
     }
 
-    /// 发一次按键（按下 + 抬起），带上当前的修饰键；“点一下”的修饰键用完即解除。
+    /// 发一次按键（按下 + 抬起），带上当前的修饰键和 adding；“点一下”的修饰键用完即解除。
     /// 返回需要提示给用户的问题（没有权限、安全输入），没有问题返回 nil。
     @discardableResult
-    func tap(_ code: CGKeyCode, isLetter: Bool) -> String? {
+    func tap(_ code: CGKeyCode, isLetter: Bool, adding: [Modifier] = []) -> String? {
         if let problem = permissionProblem() { return problem }
-        let active = Modifier.allCases.filter { state(of: $0) != .off }
+        let active = Modifier.allCases.filter { state(of: $0) != .off || adding.contains($0) }
         var extra: CGEventFlags = []
         if capsLock && isLetter { extra.insert(.maskShift) }
         if Self.arrowKeys.contains(code) { extra.formUnion([.maskNumericPad, .maskSecondaryFn]) }

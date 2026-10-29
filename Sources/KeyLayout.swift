@@ -39,6 +39,8 @@ struct KeyDef {
     let action: Action
     var isLetter = false
     var repeats = false
+    /// 长按时加 ⌥ 发出：⌫ 删一个词，←/→ 按词移动
+    var optionOnLongPress = false
 
     /// 字符键（字母、数字、符号）用大字号，功能键用小字号
     var isCharacter: Bool { shiftLabel != nil }
@@ -56,8 +58,10 @@ private func symbol(_ l: String, _ shifted: String, _ code: Int) -> KeyDef {
     KeyDef(label: l, shiftLabel: shifted, action: .key(CGKeyCode(code)))
 }
 
-private func function(_ l: String, _ code: Int, width: CGFloat = 1, repeats: Bool = false) -> KeyDef {
-    KeyDef(label: l, width: width, action: .key(CGKeyCode(code)), repeats: repeats)
+private func function(_ l: String, _ code: Int, width: CGFloat = 1, repeats: Bool = false,
+                      optionOnLongPress: Bool = false) -> KeyDef {
+    KeyDef(label: l, width: width, action: .key(CGKeyCode(code)), repeats: repeats,
+           optionOnLongPress: optionOnLongPress)
 }
 
 enum KeyLayout {
@@ -71,7 +75,7 @@ enum KeyLayout {
             symbol("7", "&", kVK_ANSI_7), symbol("8", "*", kVK_ANSI_8), symbol("9", "(", kVK_ANSI_9),
             symbol("0", ")", kVK_ANSI_0),
             symbol("-", "_", kVK_ANSI_Minus), symbol("=", "+", kVK_ANSI_Equal),
-            function("⌫", kVK_Delete, width: 2, repeats: true),
+            function("⌫", kVK_Delete, width: 2, repeats: true, optionOnLongPress: true),
         ],
         [
             function("⇥", kVK_Tab, width: 1.5),
@@ -103,10 +107,10 @@ enum KeyLayout {
             KeyDef(label: "⌘ cmd", width: 1.25, action: .modifier(.command)),
             KeyDef(label: "中/英", width: 1.25, action: .inputSwitch),
             function("", kVK_Space, width: 4),
-            function("←", kVK_LeftArrow, repeats: true),
+            function("←", kVK_LeftArrow, repeats: true, optionOnLongPress: true),
             function("↑", kVK_UpArrow, repeats: true),
             function("↓", kVK_DownArrow, repeats: true),
-            function("→", kVK_RightArrow, repeats: true),
+            function("→", kVK_RightArrow, repeats: true, optionOnLongPress: true),
             KeyDef(label: "收起", action: .hide),
         ],
     ]

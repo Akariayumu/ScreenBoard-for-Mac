@@ -46,13 +46,13 @@ final class Diagnostics {
     // MARK: 鼠标事件（触摸屏点按到应用里就是鼠标事件）
 
     /// event.timestamp 是系统开机以来的秒数，和 systemUptime 同一基准；差值是事件从系统生成到本程序处理的时间
-    func mouseDown(_ event: NSEvent, key: String?) {
+    func mouseDown(_ event: NSEvent, key: String?, button: String = "左") {
         let deliver = (ProcessInfo.processInfo.systemUptime - event.timestamp) * 1000
         append(&deliverLatencies, deliver)
         downTimestamp = event.timestamp
         dragsDuringPress = 0
-        log(String(format: "down key=%@ 送达 %.1fms subtype=%ld pressure=%.2f clickCount=%ld",
-                   key ?? "-", deliver, Int(event.subtype.rawValue), event.pressure, event.clickCount))
+        log(String(format: "%@键 down key=%@ 送达 %.1fms subtype=%ld pressure=%.2f clickCount=%ld",
+                   button, key ?? "-", deliver, Int(event.subtype.rawValue), event.pressure, event.clickCount))
     }
 
     func injected(after event: NSEvent) {
@@ -68,7 +68,8 @@ final class Diagnostics {
         let hold = (event.timestamp - down) * 1000
         append(&holdDurations, hold)
         downTimestamp = nil
-        log(String(format: "up 按住 %.0fms 拖动事件 %ld 个", hold, dragsDuringPress))
+        log(String(format: "%@键 up 按住 %.0fms 拖动事件 %ld 个",
+                   event.type == .rightMouseUp ? "右" : "左", hold, dragsDuringPress))
         if dragsDuringPress > 0 { count("按键中出现拖动") }
     }
 

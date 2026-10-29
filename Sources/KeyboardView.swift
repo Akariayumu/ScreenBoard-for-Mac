@@ -1,5 +1,5 @@
 // 键盘本体：自绘按键，处理点按。顶部一条是拖动条（中间拖动移动、右端拖动改大小）。
-// 普通键在按下时就发出，保证跟手；⌫ 和方向键按住连发。
+// 普通键在按下时就发出，保证跟手；⌫ 和方向键按住并滑动时连发，长按（右键）按词删除/移动。
 import AppKit
 
 private struct PlacedKey {
@@ -214,19 +214,28 @@ final class KeyboardView: NSView {
             return
         }
 
-        guard let index = keys.firstIndex(where: { $0.cell.contains(point) }) else {
+        guard let index = keyIndex(at: point) else {
             Diagnostics.shared.mouseDown(event, key: nil)
             return
         }
+        press(index, event: event, longPress: false)
+    }
+
+    private func keyIndex(at point: NSPoint) -> Int? {
+        point.y < handleHeight ? nil : keys.firstIndex(where: { $0.cell.contains(point) })
+    }
+
+    private func press(_ index: Int, event: NSEvent, longPress: Bool) {
         let def = keys[index].def
-        Diagnostics.shared.mouseDown(event, key: def.label.isEmpty ? "空格" : def.label)
+        Diagnostics.shared.mouseDown(event, key: def.label.isEmpty ? "空格" : def.label, button: longPress ? "右" : "左")
         pressedIndex = index
         dragMode = .key
         needsDisplay = true
 
-        trigger(def)
+        trigger(def, longPress: longPress)
         Diagnostics.shared.injected(after: event)
-        if def.repeats { startRepeat(def) }
+        // 长按的右键按下和抬起是同时到的，没法连发；连发只在“按住并滑动”时有（驱动这时实时上报左键）
+        if def.repeats && !longPress { startRepeat(def) }
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -258,9 +267,23 @@ final class KeyboardView: NSView {
         dragMode = .none
     }
 
-    // 风险 1：触摸屏驱动可能把长按转成右键或别的按钮。这里只记录，不当作按键。
+    // VoodooI2C 触摸屏（实测）：点按在手指抬起时一次性发左键按下+抬起；手指不动按住，到时间就在按住期间
+    // 一次性发右键按下+抬起；按住后滑动则实时发左键按下/拖动/抬起。所以右键就是“长按”。
     override func rightMouseDown(with event: NSEvent) {
-        Diagnostics.shared.unexpected(event, "右键按下")
+        guard let index = keyIndex(at: convert(event.locationInWindow, from: nil)) else {
+            Diagnostics.shared.unexpected(event, "右键按下（不在键上）")
+            return
+        }
+        Diagnostics.shared.count("长按（右键）")
+        press(index, event: event, longPress: true)
+    }
+
+    override func rightMouseDragged(with event: NSEvent) {
+        Diagnostics.shared.mouseDragged()
+    }
+
+    override func rightMouseUp(with event: NSEvent) {
+        mouseUp(with: event)
     }
 
     override func otherMouseDown(with event: NSEvent) {
@@ -271,11 +294,12 @@ final class KeyboardView: NSView {
         Diagnostics.shared.count("压力事件")
     }
 
-    private func trigger(_ def: KeyDef) {
+    private func trigger(_ def: KeyDef, longPress: Bool = false) {
         var problem: String?
         switch def.action {
         case .key(let code):
-            problem = injector.tap(code, isLetter: def.isLetter)
+            let adding: [Modifier] = longPress && def.optionOnLongPress ? [.option] : []
+            problem = injector.tap(code, isLetter: def.isLetter, adding: adding)
         case .modifier(let m):
             injector.toggleModifier(m)
         case .capsLock:
