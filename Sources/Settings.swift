@@ -1,4 +1,4 @@
-// 用户设置：布局（标准/分体）、停靠/浮动、尺寸、外观。存在 UserDefaults，改动后回调键盘窗口重排。
+// 用户设置：布局（标准/分体）、停靠/浮动、尺寸、外观、自动弹出。存在 UserDefaults，改动后回调键盘窗口重排。
 // 菜单栏和键盘上的齿轮用同一组菜单项。
 import AppKit
 
@@ -49,18 +49,28 @@ final class Settings: NSObject {
     private let defaults = UserDefaults.standard
     /// 设置变化后调用（键盘窗口用来重排）
     var onChange: (() -> Void)?
+    /// 当前前台的别的应用，用于“在此应用中不自动弹出”
+    var frontAppProvider: (() -> NSRunningApplication?)?
 
     private(set) var split: Bool
     private(set) var docked: Bool
     private(set) var size: Size
     private(set) var theme: Theme
+    private(set) var autoShow: Bool
+    private(set) var excludedApps: Set<String>
 
     private override init() {
         split = defaults.bool(forKey: "split")
         docked = defaults.bool(forKey: "docked")
         size = Size(rawValue: defaults.string(forKey: "size") ?? "") ?? .medium
         theme = Theme(rawValue: defaults.string(forKey: "theme") ?? "") ?? .system
+        autoShow = defaults.object(forKey: "autoShow") as? Bool ?? true
+        excludedApps = Set(defaults.stringArray(forKey: "excludedApps") ?? [])
         super.init()
+    }
+
+    func isExcluded(_ bundleID: String?) -> Bool {
+        bundleID.map { excludedApps.contains($0) } ?? false
     }
 
     func addItems(to menu: NSMenu) {
@@ -82,6 +92,14 @@ final class Settings: NSObject {
             item.state = t == theme ? .on : .off
         }
         addSubmenu(themeMenu, to: menu, "外观")
+
+        menu.addItem(.separator())
+        add(to: menu, "点输入框时自动弹出", #selector(toggleAutoShow)).state = autoShow ? .on : .off
+        if autoShow, let app = frontAppProvider?(), let id = app.bundleIdentifier {
+            let item = add(to: menu, "在“\(app.localizedName ?? id)”中不自动弹出", #selector(toggleExcluded(_:)))
+            item.representedObject = id
+            item.state = excludedApps.contains(id) ? .on : .off
+        }
     }
 
     @discardableResult
@@ -124,8 +142,22 @@ final class Settings: NSObject {
         changed()
     }
 
+    @objc private func toggleAutoShow() {
+        autoShow.toggle()
+        defaults.set(autoShow, forKey: "autoShow")
+        changed()
+    }
+
+    @objc private func toggleExcluded(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        if excludedApps.contains(id) { excludedApps.remove(id) } else { excludedApps.insert(id) }
+        defaults.set(Array(excludedApps).sorted(), forKey: "excludedApps")
+        changed()
+    }
+
     private func changed() {
-        Diagnostics.shared.log("设置：分体=\(split) 停靠=\(docked) 尺寸=\(size.rawValue) 外观=\(theme.rawValue)")
+        Diagnostics.shared.log("设置：分体=\(split) 停靠=\(docked) 尺寸=\(size.rawValue) 外观=\(theme.rawValue) "
+                               + "自动弹出=\(autoShow) 排除=\(excludedApps.sorted())")
         onChange?()
     }
 }

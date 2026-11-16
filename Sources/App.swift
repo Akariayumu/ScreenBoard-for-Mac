@@ -8,9 +8,16 @@ import ServiceManagement
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var panel: KeyboardPanel!
+    private var autoShow: AutoShowController!
     private let injector = KeyInjector()
 
     static func main() {
+        // 调试：ScreenBoard --probe <bundleID>，见 AccessibilityProbe
+        let args = CommandLine.arguments
+        if let i = args.firstIndex(of: "--probe"), i + 1 < args.count {
+            AccessibilityProbe.run(bundleID: args[i + 1])
+            return
+        }
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
@@ -27,12 +34,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Diagnostics.shared.log("辅助功能权限：\(trusted ? "已授权" : "未授权")")
 
         panel = KeyboardPanel(injector: injector)
+        autoShow = AutoShowController(panel: panel)
+        Settings.shared.frontAppProvider = { [weak self] in self?.autoShow.currentApp }
+        autoShow.start()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.button?.image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: "屏幕键盘")
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
+        // 启动时（包括登录时自启）不显示键盘，由自动弹出或菜单栏打开
+    }
+
+    // 程序已在运行时再次打开（Launchpad、访达里双击）：显示键盘
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         panel.show()
+        return false
     }
 
     // 每次打开菜单时重建，权限状态和诊断数字都是最新的

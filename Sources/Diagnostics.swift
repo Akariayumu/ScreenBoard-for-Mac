@@ -73,6 +73,13 @@ final class Diagnostics {
         if dragsDuringPress > 0 { count("按键中出现拖动") }
     }
 
+    /// 风险 6：别的应用里每次左键按下前 1 秒内的光标移动（距今毫秒、dx、dy）。
+    /// 已确认 CGEvent 字段分不出手指和触控板，看移动能不能分
+    func clickSource(_ event: NSEvent, moves: [(ago: Double, dx: Double, dy: Double)]) {
+        let detail = moves.suffix(5).map { String(format: "%.0fms(%.0f,%.0f)", $0.ago * 1000, $0.dx, $0.dy) }
+        log("别处点击 点前1秒移动 \(moves.count) 次 " + detail.joined(separator: " "))
+    }
+
     func unexpected(_ event: NSEvent, _ name: String) {
         count(name)
         log(String(format: "%@ subtype=%ld clickCount=%ld", name, Int(event.subtype.rawValue), event.clickCount))
