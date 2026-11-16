@@ -2,6 +2,17 @@
 
 仿 Win11 触摸键盘的 macOS 屏幕键盘。P0 原型、P1 外观布局和 P2 文本框点按自动弹出已完成，预研究见 `docs/onscreen-keyboard-research-20261029.md`。
 
+## 实机界面预览
+
+### 浮动深色键盘与点按文本框自动弹出（不抢当前窗口输入焦点）
+![浮动深色触摸键盘](docs/screenshots/keyboard-floating-dark.png)
+
+### 平板双手握持分体布局（中央区域完全透明且点按穿透）
+![分体拇指布局](docs/screenshots/keyboard-split.png)
+
+### 长按备选字符弹窗与 `&123` 符号 / 数字小键盘 / 快捷编辑页
+![长按备选字符与符号小键盘页](docs/screenshots/keyboard-symbols-popup.png)
+
 ## 功能
 
 - 浮动键盘：点按不抢当前应用的焦点，所有桌面和全屏应用里都能用；顶部拖动条中间拖动可以移动，右端拖动可以改大小，位置会记住。
