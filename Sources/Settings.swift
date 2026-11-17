@@ -49,6 +49,8 @@ final class Settings: NSObject {
     private let defaults = UserDefaults.standard
     /// 设置变化后调用（键盘窗口用来重排）
     var onChange: (() -> Void)?
+    /// 锁屏接力开关变化后调用
+    var onLockScreenRelayChange: (() -> Void)?
     /// 当前前台的别的应用，用于“在此应用中不自动弹出”
     var frontAppProvider: (() -> NSRunningApplication?)?
 
@@ -57,6 +59,7 @@ final class Settings: NSObject {
     private(set) var size: Size
     private(set) var theme: Theme
     private(set) var autoShow: Bool
+    private(set) var lockScreenKeyboard: Bool
     private(set) var excludedApps: Set<String>
 
     private override init() {
@@ -65,6 +68,7 @@ final class Settings: NSObject {
         size = Size(rawValue: defaults.string(forKey: "size") ?? "") ?? .medium
         theme = Theme(rawValue: defaults.string(forKey: "theme") ?? "") ?? .system
         autoShow = defaults.object(forKey: "autoShow") as? Bool ?? true
+        lockScreenKeyboard = defaults.object(forKey: "lockScreenKeyboard") as? Bool ?? true
         excludedApps = Set(defaults.stringArray(forKey: "excludedApps") ?? [])
         super.init()
     }
@@ -100,6 +104,7 @@ final class Settings: NSObject {
             item.representedObject = id
             item.state = excludedApps.contains(id) ? .on : .off
         }
+        add(to: menu, "锁屏时自动启用系统辅助键盘", #selector(toggleLockScreenKeyboard)).state = lockScreenKeyboard ? .on : .off
     }
 
     @discardableResult
@@ -148,6 +153,13 @@ final class Settings: NSObject {
         changed()
     }
 
+    @objc private func toggleLockScreenKeyboard() {
+        lockScreenKeyboard.toggle()
+        defaults.set(lockScreenKeyboard, forKey: "lockScreenKeyboard")
+        changed()
+        onLockScreenRelayChange?()
+    }
+
     @objc private func toggleExcluded(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
         if excludedApps.contains(id) { excludedApps.remove(id) } else { excludedApps.insert(id) }
@@ -157,7 +169,7 @@ final class Settings: NSObject {
 
     private func changed() {
         Diagnostics.shared.log("设置：分体=\(split) 停靠=\(docked) 尺寸=\(size.rawValue) 外观=\(theme.rawValue) "
-                               + "自动弹出=\(autoShow) 排除=\(excludedApps.sorted())")
+                               + "自动弹出=\(autoShow) 锁屏接力=\(lockScreenKeyboard) 排除=\(excludedApps.sorted())")
         onChange?()
     }
 }

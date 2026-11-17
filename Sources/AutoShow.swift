@@ -63,7 +63,7 @@ final class AutoShowController: NSObject {
 
     private func checkAfterClick(at point: CGPoint) {
         let settings = Settings.shared
-        guard settings.autoShow, !panel.isVisible else { return }
+        guard settings.autoShow, !panel.isVisible, !LockScreenRelay.isSessionLocked() else { return }
         let app = NSWorkspace.shared.frontmostApplication
         let focused = focusedElement()
         guard clickedEditable(at: point), let focused, Self.isEditable(focused) else {

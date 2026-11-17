@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var panel: KeyboardPanel!
     private var autoShow: AutoShowController!
+    private var lockRelay: LockScreenRelay!
     private let injector = KeyInjector()
 
     static func main() {
@@ -35,8 +36,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         panel = KeyboardPanel(injector: injector)
         autoShow = AutoShowController(panel: panel)
+        lockRelay = LockScreenRelay(panel: panel)
         Settings.shared.frontAppProvider = { [weak self] in self?.autoShow.currentApp }
+        Settings.shared.onLockScreenRelayChange = { [weak self] in self?.lockRelay.syncWithCurrentState() }
         autoShow.start()
+        lockRelay.start()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.button?.image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: "屏幕键盘")
         let menu = NSMenu()
@@ -135,6 +139,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func resetDiagnostics() {
         Diagnostics.shared.reset()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        lockRelay?.stop()
     }
 
     @objc private func quit() {
