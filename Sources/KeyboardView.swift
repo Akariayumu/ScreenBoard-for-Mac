@@ -50,9 +50,38 @@ final class KeyboardView: NSView {
     static let handleHeight: CGFloat = 26
     static let padding: CGFloat = 8
     private static let gap: CGFloat = 5
-    private static let gripWidth: CGFloat = 44
+    private static let gripWidth: CGFloat = 34
     private static let gearWidth: CGFloat = 40
+    private static let githubWidth: CGFloat = 34
     private static let minSplitGap: CGFloat = 40
+    private static let githubURL = URL(string: "https://github.com/Akariayumu/ScreenBoard-for-Mac")!
+    private static let githubCurves: [(CGFloat, CGFloat, CGFloat, CGFloat, CGFloat, CGFloat)] = [
+        (3.58, 0.0, 0.0, 3.58, 0.0, 8.0),
+        (0.0, 11.54, 2.29, 14.53, 5.47, 15.59),
+        (5.87, 15.66, 6.02, 15.42, 6.02, 15.21),
+        (6.02, 15.02, 6.01, 14.39, 6.01, 13.72),
+        (4.0, 14.09, 3.48, 13.23, 3.32, 12.78),
+        (3.23, 12.55, 2.84, 11.84, 2.5, 11.65),
+        (2.22, 11.5, 1.82, 11.13, 2.49, 11.12),
+        (3.12, 11.11, 3.57, 11.7, 3.72, 11.94),
+        (4.44, 13.15, 5.59, 12.81, 6.05, 12.6),
+        (6.12, 12.08, 6.33, 11.73, 6.56, 11.53),
+        (4.78, 11.33, 2.92, 10.64, 2.92, 7.58),
+        (2.92, 6.71, 3.23, 5.99, 3.74, 5.43),
+        (3.66, 5.23, 3.38, 4.41, 3.82, 3.31),
+        (3.82, 3.31, 4.49, 3.1, 6.02, 4.13),
+        (6.66, 3.95, 7.34, 3.86, 8.02, 3.86),
+        (8.7, 3.86, 9.38, 3.95, 10.02, 4.13),
+        (11.55, 3.09, 12.22, 3.31, 12.22, 3.31),
+        (12.66, 4.41, 12.38, 5.23, 12.3, 5.43),
+        (12.81, 5.99, 13.12, 6.7, 13.12, 7.58),
+        (13.12, 10.65, 11.25, 11.33, 9.47, 11.53),
+        (9.76, 11.78, 10.01, 12.26, 10.01, 13.01),
+        (10.01, 14.08, 10.0, 14.94, 10.0, 15.21),
+        (10.0, 15.42, 10.15, 15.67, 10.55, 15.59),
+        (13.71, 14.53, 16.0, 11.54, 16.0, 8.0),
+        (16.0, 3.58, 12.42, 0.0, 8.0, 0.0),
+    ]
 
     static func preferredHeight(rowHeight: CGFloat) -> CGFloat {
         handleHeight + rowHeight * 5 + padding
@@ -126,6 +155,16 @@ final class KeyboardView: NSView {
         NSRect(x: (panes.last ?? bounds).maxX - Self.gripWidth, y: 0, width: Self.gripWidth, height: Self.handleHeight)
     }
 
+    private var githubRect: NSRect {
+        let rightEdge = Settings.shared.docked ? (panes.last ?? bounds).maxX - 4 : gripRect.minX
+        return NSRect(x: rightEdge - Self.githubWidth, y: 0, width: Self.githubWidth, height: Self.handleHeight)
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(gearRect, cursor: .pointingHand)
+        addCursorRect(githubRect, cursor: .pointingHand)
+    }
+
     // MARK: 布局
 
     private func layoutKeys() {
@@ -158,6 +197,7 @@ final class KeyboardView: NSView {
             }
         }
         needsDisplay = true
+        window?.invalidateCursorRects(for: self)
         // 窗口阴影按透明区域算，分体时要等重画后更新
         DispatchQueue.main.async { [weak self] in self?.window?.invalidateShadow() }
     }
@@ -184,6 +224,7 @@ final class KeyboardView: NSView {
             }
         }
         drawSymbol("gearshape", in: gearRect, size: 13, color: .secondaryLabelColor)
+        drawGitHubIcon(in: githubRect, size: 13.5, color: .secondaryLabelColor)
         if !docked { drawGrip() }
         if let notice {
             drawText(notice, at: NSPoint(x: gearRect.maxX, y: 5), size: 11, color: .systemOrange)
@@ -206,6 +247,24 @@ final class KeyboardView: NSView {
         path.lineCapStyle = .round
         Palette.handle.setStroke()
         path.stroke()
+    }
+
+    private func drawGitHubIcon(in rect: NSRect, size: CGFloat, color: NSColor) {
+        let s = size / 16.0
+        let ox = rect.midX - size / 2.0
+        let oy = rect.midY - size / 2.0
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: ox + 8.0 * s, y: oy))
+        for c in Self.githubCurves {
+            path.curve(
+                to: NSPoint(x: ox + c.4 * s, y: oy + c.5 * s),
+                controlPoint1: NSPoint(x: ox + c.0 * s, y: oy + c.1 * s),
+                controlPoint2: NSPoint(x: ox + c.2 * s, y: oy + c.3 * s)
+            )
+        }
+        path.close()
+        color.setFill()
+        path.fill()
     }
 
     private func drawKey(_ key: PlacedKey, pressed: Bool) {
@@ -358,6 +417,11 @@ final class KeyboardView: NSView {
             if gearRect.contains(point) {
                 Diagnostics.shared.mouseDown(event, key: "设置")
                 showSettingsMenu()
+                return
+            }
+            if githubRect.contains(point) {
+                Diagnostics.shared.mouseDown(event, key: "GitHub")
+                NSWorkspace.shared.open(Self.githubURL)
                 return
             }
             guard !Settings.shared.docked, panes.contains(where: { $0.contains(point) }) else { return }
